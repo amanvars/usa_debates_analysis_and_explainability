@@ -1,0 +1,680 @@
+---
+title: "Public Debates"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    toc_depth: 3
+#editor_options: 
+  #chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading packages and data
+
+
+```{r echo = TRUE, message=FALSE, warning=FALSE}
+# data preprocessing
+library(tidyverse)
+library(tidytext)
+library(lubridate)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(qdapDictionaries)
+library(reshape2) 
+
+# data exploration
+library(summarytools) # for user-friendly html summaries of data
+library(ggmap) # for plotting data on a map
+library(hrbrthemes)
+library(showtext)
+library(usmap)
+
+showtext_auto()
+
+# directly from google fonts
+sysfonts::font_add_google("Roboto Condensed")
+
+# set some global options
+options(dplyr.width = Inf)
+theme_set(theme_ipsum_rc())
+```
+
+```{r}
+# Load speeches
+speeches <-
+  list.files(path = "data/processed/",
+             pattern = "*.csv",
+             full.names = TRUE) %>%
+  readr::read_csv(
+    id = "file_name",
+    col_types = cols(
+      speech_id = col_character(),
+      speakerid = col_character(),
+      district = col_character()
+    )
+  ) %>% mutate(
+    chamber = factor(chamber),
+    gender = factor(gender),
+    party = factor(party),
+    nonvoting = factor(nonvoting),
+    session = as.integer(gsub(".*?([0-9]+).*", "\\1", file_name)),
+    file_name = NULL
+  ) %>% mutate(party = recode(party, D = 'Democratic', R = 'Republican'), 
+                              name = paste(firstname, lastname)
+  ) %>% filter(!is.na(speech))
+
+```
+
+```{r}
+# Remove duplicates
+speeches <- speeches %>% group_by(speech) %>% filter(n() == 1) %>% ungroup()
+```
+
+```{r}
+# Add word counts for each speech
+speeches <- mutate(speeches, word_count = str_count(speech ,"\\W+"))
+```
+
+```{r}
+# Display statistics (not visible in browser)
+speeches %>% dfSummary %>% view()
+```
+
+```{r}
+speeches
+```
+
+# Speech Analysis
+
+## Speech length frequency
+
+```{r}
+party.colors <- c(Democratic = "steelblue1", Republican = "indianred1")
+
+# Speech length frequency
+speeches  %>%
+  ggplot(aes(x = word_count)) +
+  geom_histogram(
+    binwidth = 25,
+    fill = "#69b3a2",
+    color = "black",
+    alpha = 0.9
+  ) +
+  ggtitle("Speech length frequency") +
+  xlab("Speech length") +
+  ylab("Count") +
+  xlim(0, 1000)
+```
+
+```{r}
+# Speech length frequency split by party
+speeches %>%
+  ggplot(aes(x = word_count, fill = party)) +
+  geom_histogram(
+    color = "black",
+    alpha = 0.8,
+    position = 'identity',
+    binwidth = 25
+  ) +
+  xlim(0, 1000) +
+  xlab("Speech length") +
+  ylab("Count") +
+  ggtitle("Speech length frequency by party") +
+  scale_fill_manual(values=party.colors)
+
+```
+## Average speech length
+
+```{r}
+# Average speech length in session
+speeches %>% group_by(session) %>% summarise(mean_words = mean(word_count)) %>%
+  ggplot(aes(x = session, y = mean_words)) +
+  geom_line(color = "grey") +
+  geom_point(
+    shape = 21,
+    color = "black",
+    fill = "#69b3a2",
+    size = 3
+  ) +
+  xlab("Session") +
+  ylab("Average length") +
+  ggtitle("Average speech length in session")
+```
+
+```{r}
+# Average speech length in session split by party
+speeches %>% group_by(session, party) %>%
+  summarise(mean_words = mean(word_count)) %>%
+  ggplot(aes(
+    x = session,
+    y = mean_words,
+    group = party,
+    color = party
+  )) +
+  geom_line() +
+  geom_point(
+    shape = 21,
+    size = 3,
+    aes(fill = party),
+    color = "black",
+  ) + 
+  xlab("Session") +
+  ylab("Average length") +
+  ggtitle("Average speech length in session by party")  +
+  scale_fill_manual(values=party.colors) +
+  scale_color_manual(values=party.colors)
+```
+## Total speech length
+```{r}
+# Total words in session
+speeches %>% group_by(session) %>% summarise(sum_words = sum(word_count)) %>%
+  ggplot(aes(x = session, y = sum_words)) +
+  geom_line(color = "grey") +
+  geom_point(
+    shape = 21,
+    color = "black",
+    fill = "#69b3a2",
+    size = 3
+  ) +
+  xlab("Session") +
+  ylab("Total words") +
+  ggtitle("Total words in session")
+```
+
+```{r}
+# Total words in session split by party
+speeches   %>% group_by(session, party) %>%
+  summarise(sum_words = sum(word_count)) %>%
+  ggplot(aes(
+    x = session,
+    y = sum_words,
+    group = party,
+    color = party
+  )) +
+  geom_line() +
+  geom_point(
+    shape = 21,
+    size = 3,
+    aes(fill = party),
+    color = "black",
+  ) +  xlab("Session") +
+  ylab("Total words") +
+  ggtitle("Total words in session by party") +
+  scale_fill_manual(values=party.colors) +
+  scale_color_manual(values=party.colors)
+```
+
+## Number of speeches
+
+```{r}
+# Number of speeches in session
+speeches %>% group_by(session) %>% summarise(count = n())  %>%
+  ggplot(aes(x = session, y = count)) +
+  geom_line(color = "grey") +
+  geom_point(
+    shape = 21,
+    color = "black",
+    fill = "#69b3a2",
+    size = 3
+  ) +
+  xlab("Session") +
+  ylab("Speeches") +
+  ggtitle("Speeches in session")
+```
+
+```{r}
+# Number of speeches in session
+speeches  %>% group_by(session, party) %>% summarise(count = n())  %>% ggplot(aes(
+  x = session,
+  y = count,
+  group = party,
+  color = party
+)) +
+  geom_line() +
+  geom_point(
+    shape = 21,
+    size = 3,
+    aes(fill = party),
+    color = "black",
+  ) +
+  xlab("Session") +
+  ylab("Speeches") +
+  ggtitle("Speeches in session by party") +
+  scale_fill_manual(values=party.colors) +
+  scale_color_manual(values=party.colors)
+```
+
+# Speaker Analysis
+
+## Top speakers by number of speeches
+
+```{r}
+# Top 10 speakers by number of speeches
+speeches %>% group_by(speakerid) %>%
+  summarise(speech_count = n(),
+            party = party,
+            name = name) %>%
+  slice(1) %>% ungroup() %>%
+  arrange(speech_count) %>% tail(10)%>% 
+  mutate(name = factor(name, levels = name)) %>%
+  ggplot(aes(
+    x = name,
+    y = speech_count,
+    group = party,
+    fill = party
+  )) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  coord_flip() +
+  xlab("Speaker") +
+  ylab("Speeches") +
+  ggtitle("Top speakers by number of speeches")  +
+  scale_fill_manual(values=party.colors)
+```
+
+## Top speakers by average speech length
+
+```{r}
+# Top 10 speakers by average speech length
+speeches %>% group_by(speakerid) %>%
+  summarise(mean_speech_length = mean(word_count),
+            party = party,
+            name = name) %>%
+  slice(1) %>% ungroup() %>%
+  arrange(mean_speech_length) %>% tail(10)%>% 
+  mutate(name = factor(name, levels = name)) %>%
+  ggplot(aes(
+    x = name,
+    y = mean_speech_length,
+    group = party,
+    fill = party
+  )) +
+  geom_bar(stat = "identity", color = "black", width = 0.7) +
+  coord_flip() +
+  xlab("Speaker") +
+  ylab("Speech length") +
+  ggtitle("Top speakers by average speech length") +
+  scale_fill_manual(values=party.colors)
+```
+
+## Frequency of session participation
+
+```{r}
+# Frequency of session participation by Republican party
+speeches %>%
+  filter(party == 'Republican') %>%
+  group_by(speakerid) %>%
+  summarise(session_count = n_distinct(session),
+            name = name) %>%
+  slice(1) %>% ungroup() %>%
+  ggplot(aes(x = session_count)) +
+  geom_histogram(
+    color = "black",
+    alpha = 0.7,
+    position = 'identity',
+    binwidth = 1,
+    fill = "indianred1"
+  ) +
+  xlim(0, 10) +
+  xlab("Sessions") +
+  ylab("Count") +
+  ggtitle("Frequency of session participation by Republican party")
+```
+
+```{r}
+# Frequency of session participation by Democratic party
+speeches %>%
+  filter(party == 'Democratic') %>%
+  group_by(speakerid) %>%
+  summarise(session_count = n_distinct(session),
+            name = name) %>%
+  slice(1) %>% ungroup() %>%
+  ggplot(aes(x = session_count)) +
+  geom_histogram(
+    color = "black",
+    alpha = 0.7,
+    position = 'identity',
+    binwidth = 1,
+    fill = "steelblue1"
+  ) +
+  xlim(0, 10) +
+  xlab("Sessions") +
+  ylab("Count") +
+  ggtitle("Frequency of session participation by Democratic party")
+```
+
+## Party switches
+
+```{r}
+speeches %>% group_by(speakerid) %>%
+  mutate(party_count = n_distinct(party)) %>% filter(party_count == 2) %>% 
+  ungroup %>% group_by(speakerid, session) %>% slice(1) %>% 
+  select(name, party) %>% 
+  ggplot(aes(
+    x = session,
+    y = party,
+    group = name,
+    color = name
+  )) +
+  geom_line() +
+  geom_point(
+    shape = 21,
+    size = 3,
+    aes(fill = name),
+    color = "black",
+  ) +
+  xlab("Session") +
+  ylab("Party") +
+  ggtitle("Party switches")
+```
+```{r fig.height = 5, fig.width = 10}
+speeches %>% group_by(speakerid) %>%
+  mutate(party_count = n_distinct(party)) %>% filter(party_count == 2) %>% 
+  ungroup %>% 
+  select(name, party, date) %>% 
+  ggplot(aes(date, party)) +
+  geom_line() +
+  geom_point(
+    shape = 21,
+    size = 3,
+    aes(fill = party),
+    color = "black",
+  ) +
+  facet_wrap( ~ name, ncol=1) +
+  labs( NULL) +
+  ggtitle("Dates of switch") +
+  scale_fill_manual(values=party.colors) +
+  theme(legend.position="none")
+```
+
+## US States by number of speakers
+
+```{r}
+speakers_by_states <-
+  speeches %>% group_by(state) %>% 
+  summarise(speaker_count = n_distinct(speakerid)) %>% ungroup()
+plot_usmap(
+  data = speakers_by_states,
+  values = "speaker_count",
+  color = "black",
+  regions = c("states")
+) +
+  scale_fill_continuous(
+    low = "white",
+    high = "orange",
+    name = "Number of speakers",
+    label = scales::comma
+  ) + theme(legend.position = "right") + 
+  labs(title = "US States by number of speakers")  
+```
+
+# Word Analysis
+
+```{r}
+# Split speeches to words
+speech_words <- speeches %>% unnest_tokens(word, speech)
+# Remove stop words
+data(stop_words)
+speech_words <- speech_words %>% anti_join(stop_words)
+
+# Filter existing words
+is.word  <- function(x)
+  x %in% GradyAugmented
+
+speech_words <- speech_words[which(is.word(speech_words$word)), ]
+```
+
+## Word frequency
+
+```{r}
+# Top 10 frequent words
+speech_words %>%
+  count(word, sort = TRUE) %>%
+  head(10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = n, y = word)) +
+  geom_col(width = 0.7,
+           fill = "#69b3a2",
+           color = "black",) +
+  ggtitle("Word frequency") +
+  xlab("Count") +
+  ylab("Word")
+```
+
+```{r}
+# Top 10 frequent words by Republican party
+speech_words %>%
+  filter(party == 'Republican') %>%
+  count(word, sort = TRUE) %>%
+  head(10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = n, y = word)) +
+  geom_col(
+    width = 0.7,
+    fill = "indianred1",
+    color = "black",
+    alpha = 0.7
+  ) +
+  ggtitle("Word frequency by Republican party") +
+  xlab("Count") +
+  ylab("Word")
+```
+
+```{r}
+# Top 10 frequent words by Democratic party
+speech_words %>%
+  filter(party == 'Democratic') %>%
+  count(word, sort = TRUE) %>%
+  head(10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = n, y = word)) +
+  geom_col(
+    width = 0.7,
+    fill = "steelblue1",
+    color = "black",
+    alpha = 0.7
+  ) +
+  ggtitle("Word frequency by Democratic party") +
+  xlab("Count") +
+  ylab("Word")
+```
+
+```{r}
+# Word Cloud
+speech_words %>%
+  count(word, sort = TRUE) %>%
+  with(
+    wordcloud(
+      word,
+      n,
+      min.freq = 5,
+      max.words = 100,
+      random.order = FALSE,
+      scale = c(4, .2),
+      rot.per = 0.40,
+      colors = brewer.pal(8, "Dark2")
+    )
+  )
+```
+
+```{r}
+# Word cloud for Democratic party
+speech_words %>%
+  filter(party == 'Democratic') %>%
+  count(word, sort = TRUE) %>%
+  with(
+    wordcloud(
+      word,
+      n,
+      min.freq = 5,
+      scale = c(4, .2),
+      max.words = 100,
+      random.order = FALSE,
+      random.color = FALSE,
+      colors = c("steelblue1", "steelblue2", "steelblue3", "steelblue")
+    )
+  )
+```
+
+```{r}
+# Word cloud for Republican party
+speech_words %>%
+  filter(party == 'Republican') %>%
+  count(word, sort = TRUE) %>%
+  with(
+    wordcloud(
+      word,
+      n,
+      min.freq = 5,
+      scale = c(4, .2),
+      max.words = 100,
+      random.order = FALSE,
+      random.color = FALSE,
+      colors = c("indianred1", "indianred2", "indianred3", "indianred")
+    )
+  )
+```
+```{r}
+# Word cloud comparison by party
+speech_words %>%
+  count(word, party, sort = TRUE) %>%
+  acast(word ~ party, value.var = "n", fill = 0) %>%
+  comparison.cloud(
+    scale = c(3, .2),
+    colors = c("steelblue1", "indianred1"),
+    max.words = 50,
+    title.bg.colors = c("steelblue1", "indianred1"),
+    title.colors = "white",
+    title.size = 2
+  )
+```
+
+## Party tf-idf
+
+```{r}
+speech_words %>% count(party, word, sort = TRUE) %>%
+  ungroup() %>%
+  bind_tf_idf(word, party, n) %>%
+  arrange(desc(tf_idf)) %>% group_by(party) %>% slice_max(tf_idf, n = 10) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, tf_idf)) %>%
+  ggplot(aes(tf_idf, word, fill = party)) +
+  geom_col(width = 0.7,
+           color = "black",
+           alpha = 0.7) +
+  facet_wrap( ~ party, scales = "free") +
+  labs(x = "tf-idf", y = NULL) +
+  ggtitle("Party tf-idf")  +
+  scale_fill_manual(values = party.colors)
+
+```
+
+## Session tf-idf
+
+```{r fig.height = 10, fig.width = 15}
+# Session tf-idf by Republican party
+speech_words %>% filter(party == 'Republican') %>% 
+  count(session, word, sort = TRUE) %>%
+  ungroup() %>%
+  bind_tf_idf(word, session, n) %>%
+  arrange(desc(tf_idf)) %>% group_by(session) %>% 
+  slice_max(tf_idf, n = 5) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, tf_idf)) %>%
+  ggplot(aes(tf_idf, word)) +
+  geom_col(width = 0.7,
+           color = "black",
+           alpha = 0.7,
+           fill = "indianred1") +
+  facet_wrap( ~ session, scales = "free") +
+  labs(NULL) +
+  ggtitle("Session tf-idf by Republican party")
+
+```
+
+```{r fig.height = 10, fig.width = 15}
+# Session tf-idf by Democratic party
+speech_words %>% filter(party == 'Democratic') %>% 
+  count(session, word, sort = TRUE) %>%
+  ungroup() %>%
+  bind_tf_idf(word, session, n) %>%
+  arrange(desc(tf_idf)) %>% group_by(session) %>% 
+  slice_max(tf_idf, n = 5) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, tf_idf)) %>%
+  ggplot(aes(tf_idf, word)) +
+  geom_col(width = 0.7,
+           color = "black",
+           alpha = 0.7,
+           fill = "steelblue1") +
+  facet_wrap( ~ session, scales = "free") +
+  labs(NULL) +
+  ggtitle("Session tf-idf by Democratic party")
+
+```
+## Sentiment analysis
+
+```{r}
+# Word cloud comparison
+speech_words %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(
+    colors = c("#F8766D", "#00BFC4"),
+    max.words = 50,
+    title.bg.colors = "white"
+  )
+```
+
+```{r}
+# Word contributions
+speech_words %>%
+  inner_join(get_sentiments("afinn")) %>%
+  group_by(word) %>%
+  summarize(occurences = n(),
+            contribution = sum(value))  %>%  slice_max(abs(contribution), n = 20) %>%
+  mutate(word = reorder(word, contribution)) %>%
+  ggplot(aes(contribution, word, fill = contribution > 0)) +
+  geom_col(
+    width = 0.7,
+    color = "black",
+    alpha = 0.7,
+    show.legend = FALSE
+  ) +
+  labs(y = NULL) +
+  ggtitle("Word contribution") +
+  xlab("Contribution")
+```
+
+```{r}
+# Word contributions by party
+speech_words %>%
+  count(party, word, sort = TRUE) %>%
+  ungroup() %>%
+  inner_join(get_sentiments("afinn")) %>%
+  mutate(contribution = value * n / sum(n)) %>%
+  group_by(party) %>%
+  slice_max(abs(contribution), n = 20) %>%
+  ungroup() %>%
+  mutate(word = reorder_within(word, contribution, party)) %>%
+  ggplot(aes(contribution, word, fill = contribution > 0)) +
+  geom_col(
+    width = 0.7,
+    color = "black",
+    alpha = 0.7,
+    show.legend = FALSE
+  ) +
+  facet_wrap( ~ party, scales = "free") +
+  scale_y_reordered() +
+  labs(x = "Contribution",
+       y = NULL) +
+  ggtitle("Word contribution by party")
+
+```
+
